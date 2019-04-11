@@ -1,0 +1,171 @@
+---
+title: "A rule-based analysis of *akwelye*"
+author: "Nay San"
+date: 'Generated `r format(Sys.time(), "%F %R UTC%z")`'
+output: 
+  html_document: 
+    number_sections: yes
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(akwelye)
+library(googlesheets)
+library(tidyr)
+library(purrr)
+library(DT)
+```
+
+# About
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+# Raw data
+
+The data are stored on a [Google Sheets document](https://docs.google.com/spreadsheets/d/1BEHmb78Wto0jEu_5xJpPyQCVnIgP8l-gkkOpDhdlJbk/edit#gid=0), and consists of two tables, lexicon and songlines.
+
+```{r gsheet-setup, message=FALSE}
+akwelye_gsheet <- gs_key("1BEHmb78Wto0jEu_5xJpPyQCVnIgP8l-gkkOpDhdlJbk")
+akwelye_data   <- list("lexicon", "songlines") %>%
+        set_names(.) %>% 
+        map(~ gs_read(akwelye_gsheet, .))
+
+```
+
+
+## Lexicon
+
+```{r display-lexicon, echo=FALSE}
+akwelye_data$lexicon %>%
+        head() %>% 
+        datatable()
+```
+
+## Songlines
+
+```{r display-songlines, echo=FALSE}
+akwelye_data$songlines %>%
+        head() %>% 
+        datatable()
+```
+
+# Derived data
+
+## Derive line-level underlying forms from roots and affixes, and combinations thereof
+
+We derive reduplicated forms and then combine these forms as well as lexical roots and affixes according to the combinations required by the gloss lines in the `songlines` table, e.g. `arm_whilst_23REDUP+emph arm_whilst_23REDUP` for line 1A.
+
+```{r derive-underlying-forms, message=FALSE}
+# derive reduplicated forms
+lexicon_df <- akwelye_data$lexicon %>% 
+        rowwise() %>% 
+        mutate(redup = reduplicate(underlying_form)) %>%
+        filter(redup != underlying_form) %>%
+        mutate(gloss = paste0(gloss, "_23REDUP")) %>%
+        select(gloss, underlying_form = redup) %>% 
+        bind_rows(akwelye_data$lexicon, .) %>%
+        arrange(gloss)
+
+# derive underlying forms of lines
+songlines_df <- akwelye_data$songlines %>%
+        select(line, gloss) %>%
+        separate_rows(gloss, sep = " ") %>%
+        mutate(word = 1:n()) %>%
+        separate_rows(gloss, sep = "[+|-|=]") %>%
+        group_by(line, word) %>%
+        left_join(lexicon_df) %>%
+        summarise(underlying_form = paste0(underlying_form, collapse = "")) %>%
+        group_by(line) %>%
+        summarise(underlying_form = paste0(underlying_form, collapse = "#")) %>%
+        ungroup() %>%
+        left_join(akwelye_data$songlines, .)
+
+head(songlines_df) %>% 
+datatable()
+```
+
+## Derivation of surface forms from sequential rule application
+
+### Rule ordering
+
+```{r rule-ordering}
+ordered_rules <- c(
+        "change_preGV_vowel",   # change vowel quality before vowel-glide sequences
+        "front_initial_schwas", # front schwa if word-initial
+        "round_schwas",         # round schwa before labial consonants
+        "delete_sfinal_schwas", # Delete stem-final schwa where suffixing element is vowel-initial
+        "assign_stress"         # Assign primary and secondary stress
+)
+```
+
+### Derivation table
+
+```{r show-derivation}
+derivation_df <- songlines_df %>%
+        select(line, underlying_form) %>%
+        mutate(derivation = map(underlying_form, ~ derive_surface(., ordered_rules))) %>%
+        unnest() %>%
+        select(-underlying_form) %>%
+        group_by(line) %>%
+        mutate_all(funs(ifelse(duplicated(.), "-", .)))
+        
+derivation_df_wide <- derivation_df %>%      
+        unite("temp", step, rule, sep = " ~ ") %>%
+        spread(line, form) %>%
+        separate(temp, into = c("step", "rule"), sep = " ~ ")
+
+derivation_df %>%
+        datatable()
+```
+
+# Validation
+
+```{r validation_df, message=FALSE}
+validation_df <- 
+        select(derivation_df, -step, -rule) %>%
+        group_by(line) %>% 
+        filter(row_number() == n()) %>%
+        rename(derived_spoken = form) %>%
+        left_join(songlines_df) %>% 
+        mutate(
+                derived_spoken = str_remove_all(derived_spoken, "[-|\\.|\\+]") %>% str_replace_all("#", " "),
+                expected_spoken = str_remove_all(expected_spoken, "ˌ"), # todo: work out how to assign secondary stress
+                spoken_ok = derived_spoken == expected_spoken
+        )
+```
+
+## Summary
+
+```{r validation-summary}
+validation_df %>%
+        group_by(spoken_ok) %>%
+        summarise(
+                num   = n(),
+                lines = sort(line) %>% paste0(collapse = ", ")
+        ) %>%
+        ungroup %>% 
+        mutate(percent = num / sum(num) * 100) %>%
+        knitr::kable()
+```
+
+
+## Details
+
+```{r validation-details}
+validation_df %>%
+        gather(key = property, value = value, -line) %>%
+        mutate(property = factor(property, levels = c("spoken_ok", "expected_spoken", "derived_spoken", "underlying_form", "gloss"))) %>%
+        arrange(line, property) %>%
+        datatable()
+```
+
+
+<style type="text/css">
+h1 { font-size: 1.4em }
+h2 { font-size: 1.3em }
+h3 { font-size: 1.2em }
+</style>
