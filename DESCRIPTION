@@ -1,15 +1,22 @@
 Package: akwelye
 Type: Package
-Title: A phonological analysis of akwelye
-Version: 0.1.0
+Title: Text-setting in akwelye
+Version: 1.0.0
 Author: Nay San
 Maintainer: Nay San <nay.san@stanford.edu>
-Description: A phonological analysis of akwelye, a song set in Kaytetye
-    (a Aboriginal language spoken in Central Australia).
+Description: A computational, constraint-based approach to text-setting in akwelye,
+    a set of ceremonial songs traditionally sung and passed on orally by groups of
+    Kaytetye-speaking women in Central Australia
 License: MIT
 Encoding: UTF-8
 LazyData: true
 Depends:
+    compiler,
     dplyr,
-    stringr
-RoxygenNote: 6.0.1
+    furrr,
+    partitions,
+    purrr,
+    readr,
+    stringr,
+    tidyr
+RoxygenNote: 6.1.1
